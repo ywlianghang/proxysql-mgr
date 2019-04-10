@@ -1,0 +1,37 @@
+# -*- coding:utf8 -*-
+import smtplib
+class sendMail:
+      def __init__(self,body):
+          self.body = body
+      def asendMail(self):
+          smtp_server = 'smtp.163.com'
+          from_mail = 'zuimengle@163.com'
+          mail_pass = '1qaz2wsx'
+          to_mail = ['ywlianghang@163.com']
+          cc_mail = ['jglianghang@163.com']
+          from_name = 'python Mysql MGR monitor'
+          subject = 'monitr'.encode('gbk')   # 以gbk编码发送，一般邮件客户端都能识别
+          mail = [
+              "From: %s <%s>" % (from_name, from_mail),
+              "To: %s" % ','.join(to_mail),   # 转成字符串，以逗号分隔元素
+              "Subject: %s" % subject,
+              "Cc: %s" % ','.join(cc_mail),
+              "",
+              self.body
+              ]
+          msg = '\n'.join(mail)  # 这种方式先将头信息放到列表中，然后用join拼接，并以换行符分隔元素，结果就是和上面注释一样了
+          print msg
+          try:
+            s = smtplib.SMTP()
+            s.connect(smtp_server, '25')
+            s.login(from_mail, mail_pass)
+            s.sendmail(from_mail, to_mail+cc_mail, msg)
+            #s.quit()
+            s.close()
+          except smtplib.SMTPException as e:
+            print "Error: %s" %e
+
+
+#if __name__ == "__main__":
+a = sendMail("is a test!")
+a.asendMail()

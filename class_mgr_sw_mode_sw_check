@@ -1,0 +1,98 @@
+# -*- coding: utf8 -*-
+import MySQLdb as mysqldb
+# 1、初始化数据（获取ip地址、端口、hostgroup_id、状态，server__id）
+#当出现连接不上MySQL时修改mysql_server中status为down，发送邮件
+
+class dataInitialize:
+    def __init__(self):
+        self.mysqlServerInfo = []
+        self.proxyname = 'admin'
+        self.proxypassword = 'admin'
+        self.proxyhostname = '127.0.0.1'
+        self.proxyport = 6032
+        self.dbName = ''
+        self.dbPassword = ''
+    def connectDB(self,host, port, user, password, db, sql, charset="utf8"):
+        """用于连接MySQL程序，执行sql获取数据"""
+        try:
+            conn = mysqldb.connect(
+                host=host,
+                port=port,
+                user=user,
+                passwd=password,
+                db=db,
+                charset=charset
+            )
+            cur = conn.cursor()
+            cur.execute(sql)
+            data = cur.fetchall()
+            conn.commit()
+            conn.close()
+            return data
+        except Exception as result:
+              print('连接%s:%d数据库失败,详细信息：%s' %(host,port,result))
+        finally:
+            pass
+    def mysql_uuid(self,host, port):
+        userinfo = self.connectDB(self.proxyhostname, self.proxyport, self.proxyname, self.proxypassword, 'main',
+                             'select username,password from mysql_users where active=1 limit 1')
+        for row in userinfo:
+            self.dbName = row[0].encode('utf-8')
+            self.password = row[1].encode('utf-8')
+        try:
+            a = self.connectDB(host, port, self.dbName, self.password, 'sys', 'show global variables like "server_uuid"')
+        except TypeError:
+            pass
+        if a != None:
+           for row in a:
+               server_uuid = row[1].encode('utf-8')
+        else:
+            server_uuid = 0
+        return server_uuid
+
+    def dataDB(self):
+        proxydata = self.connectDB('127.0.0.1',self.proxyport,'admin','admin','main','select * from mysql_servers')
+        #mysqldata = self.connectDB('127.0.0.1',)
+        for row in proxydata:
+            mysqlServerDic = {}
+            mysqlServerDic['hostgroup_id'] = row[0].encode('utf-8')
+            mysqlServerDic['hostname'] = row[1].encode('utf-8')
+            mysqlServerDic['port'] = row[2].encode('utf-8')
+            mysqlServerDic['status'] = row[3].encode('utf-8')
+            hostname = row[1].encode('utf-8')
+            port = int(row[2].encode('utf-8'))
+            server_uuid = self.mysql_uuid(hostname, port)
+            mysqlServerDic['server_uuid'] = server_uuid
+            self.mysqlServerInfo.append(mysqlServerDic)
+    # 2、通过proxysql获取master信息的server_id
+    def masterServer_id(self):
+        masterServer_uuid = self.connectDB(self.proxyhostname,6033,'proxysql','proxysql','performance_schema','select variable_value from global_status where variable_name="group_replication_primary_member"')
+        return  masterServer_uuid[0][0]
+    # 3、查询master对应的端口及ip
+    def masterIpPort(self):
+        masterServer_uuid = self.masterServer_id()
+        for info in self.mysqlServerInfo:
+            if info['server_uuid'] == masterServer_uuid:
+                return info['hostname'],info['port']
+    # 4、修改mysql_servers表中信息，将新主加入到对应的写主中
+    def updateMysqlServers(self):
+        newMasterIp,newMasterPort = self.masterIpPort()
+        queyOldMasterServerHostGroupIdSQL = 'select destination_hostgroup from mysql_query_rules where match_digest = "^SELECT.*FOR UPDATES"'
+        oldMasterHostGroup_Id = self.connectDB(self.proxyhostname, self.proxyport, self.proxyname, self.proxypassword, 'main',queyOldMasterServerHostGroupIdSQL )
+        newMasterHostGroupId =  oldMasterHostGroup_Id[0][0]
+        updateMasterServersSQL = 'update mysql_servers set hostgroup_id = %s where hostname = \'%s\' and port = %s' %(newMasterHostGroupId,newMasterIp,newMasterPort)
+        print updateMasterServersSQL
+        updateOldMasterServersStatusSQL = 'update mysql_servers set status = "OFFLINE_HARD" where hostgroup_id = %s' %newMasterHostGroupId
+        self.connectDB(self.proxyhostname, self.proxyport, self.proxyname, self.proxypassword, 'main', updateOldMasterServersStatusSQL)
+        self.connectDB(self.proxyhostname,self.proxyport,self.proxyname,self.proxypassword,'main',updateMasterServersSQL)
+
+    # 5、加载重启
+    def loadMysqlServer(self):
+        loadRuntime = 'load mysql servers to runtime;save mysql servers to disk;'
+        date = self.connectDB(self.proxyhostname,self.proxyport,self.proxyname,self.password,'main',loadRuntime)
+data=dataInitialize()
+data.dataDB()
+data.updateMysqlServers()
+
+
+
